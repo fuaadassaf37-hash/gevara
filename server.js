@@ -20,6 +20,7 @@ const path = require('path');
 const fs = require('fs/promises');
 const fssync = require('fs');
 const { Server: SocketIOServer } = require('socket.io');
+const compression = require('compression');
 
 // ----------------------------------------------------------------------------
 // الإعدادات (كلها قابلة للتغيير عبر متغيرات البيئة على Railway)
@@ -47,8 +48,19 @@ const ACCOUNTS = {
 let store = { seq: 0, records: {}, log: [] };
 let writeChain = Promise.resolve(); // طابور يضمن كتابة واحدة في كل مرة على القرص
 
+async function safeMkdir(dir) {
+  // على بعض أنظمة تثبيت الـ Volumes (مثل Railway)، قد يرمي mkdir بخطأ EEXIST
+  // حتى مع recursive:true إن كان المسار هو نقطة تثبيت الـ Volume نفسها —
+  // هذا ليس خطأً فعلياً (المجلد موجود فعلاً وهذا هو المطلوب)، فنتجاهله فقط.
+  try {
+    await fs.mkdir(dir, { recursive: true });
+  } catch (e) {
+    if (e.code !== 'EEXIST') throw e;
+  }
+}
+
 async function ensureDataDir() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
+  await safeMkdir(DATA_DIR);
 }
 
 async function loadStore() {
@@ -81,10 +93,44 @@ function persistStore() {
 }
 
 // ----------------------------------------------------------------------------
+// نسخ احتياطية محلية دورية — طبقة أمان إضافية فوق الملف الحي نفسه، بحيث لو
+// تلف sync-store.json أو حصل تعديل خاطئ جماعي، يمكن الرجوع لنسخة سابقة.
+// تُحفَظ داخل DATA_DIR/backups (نفس القرص الدائم) وتُبقي آخر BACKUP_KEEP نسخة فقط.
+// ----------------------------------------------------------------------------
+const BACKUP_DIR = path.join(DATA_DIR, 'backups');
+const BACKUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // كل 6 ساعات
+const BACKUP_KEEP = 12; // آخر 12 نسخة (= يومان تقريباً بمعدل كل 6 ساعات)
+
+async function runBackup() {
+  try {
+    await safeMkdir(BACKUP_DIR);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const dest = path.join(BACKUP_DIR, `sync-store-${stamp}.json`);
+    await fs.copyFile(STORE_FILE, dest);
+    const files = (await fs.readdir(BACKUP_DIR)).filter((f) => f.startsWith('sync-store-')).sort();
+    const excess = files.length - BACKUP_KEEP;
+    if (excess > 0) {
+      for (const f of files.slice(0, excess)) await fs.unlink(path.join(BACKUP_DIR, f));
+    }
+  } catch (e) {
+    console.warn('تعذّر إنشاء نسخة احتياطية:', e.message);
+  }
+}
+
+// ----------------------------------------------------------------------------
 // Express app
 // ----------------------------------------------------------------------------
 const app = express();
+app.use(compression()); // ضغط gzip — مهم جداً لأن index.html بحجم ~8 ميجابايت
 app.use(express.json({ limit: '25mb' })); // الصور Base64 قد تجعل الحمولة كبيرة
+// جسم طلب تالف (JSON غير صالح) كان سيصل لمعالج الأخطاء الافتراضي في Express
+// ويُظهر صفحة HTML فيها تفاصيل داخلية — هنا نرجع خطأ نظيف ومختصر بدلاً من ذلك.
+app.use((err, req, res, next) => {
+  if (err && err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'invalid JSON body' });
+  }
+  next(err);
+});
 
 // فحص صحة بسيط بدون مصادقة — يفيد Railway healthcheck
 app.get('/healthz', (req, res) => res.status(200).send('ok'));
@@ -262,11 +308,27 @@ io.on('connection', (socket) => {
 
 async function main() {
   await loadStore();
+  await runBackup(); // نسخة عند الإقلاع أيضاً، فوق الجدولة الدورية
+  setInterval(runBackup, BACKUP_INTERVAL_MS);
   httpServer.listen(PORT, () => {
     console.log(`✓ الديوان العسكري — السيرفر يعمل على المنفذ ${PORT}`);
     console.log(`✓ مجلد البيانات: ${DATA_DIR}`);
   });
 }
+
+// إغلاق آمن: عند إعادة نشر Railway أو إيقاف يدوي، السيرفر يتلقى SIGTERM —
+// ننتظر انتهاء أي كتابة قيد التنفيذ على القرص قبل الخروج فعلياً، حتى لا
+// يُفقَد آخر تعديل وصل للتو ولم يُكتب بعد.
+async function gracefulShutdown(signal) {
+  console.log(`\n${signal} — إغلاق آمن، انتظار اكتمال آخر كتابة على القرص...`);
+  try {
+    await writeChain;
+  } catch (e) {}
+  httpServer.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 5000); // شبكة أمان لو تعلّق شيء
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 main().catch((err) => {
   console.error('فشل بدء تشغيل السيرفر:', err);
