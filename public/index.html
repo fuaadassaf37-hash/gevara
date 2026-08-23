@@ -11773,21 +11773,24 @@ function getTafaqudRows() {
   return rows;
 }
 
-function exportTafaqudExcel() {
-  const date = document.getElementById('tafaqud-date').value;
-  const shift = document.getElementById('tafaqud-shift').value;
+function buildTafaqudExcelRows() {
   const header = ['التسلسل','الرقم الذاتي','الاسم الثلاثي','السوية التنظيمية الثانية','السوية التنظيمية الثالثة','السوية التنظيمية الرابعة','السوية التنظيمية الخامسة','نمط الدوام','مسمى العمل','مكان الانتشار'];
   const rows = [header];
   getTafaqudRows().forEach(r => rows.push([r.seq,r.milId,r.name,r.lv2,r.lv3,r.lv4,r.lv5,r.shift,r.job,r.location]));
+  return rows;
+}
+
+function exportTafaqudExcel() {
+  const date = document.getElementById('tafaqud-date').value;
+  const shift = document.getElementById('tafaqud-shift').value;
+  const rows = buildTafaqudExcelRows();
   downloadTafaqudExcel(rows, `تفقد_${shift}_${date}`);
 }
 
 async function shareTafaqudExcelDirect() {
   const date = document.getElementById('tafaqud-date').value;
   const shift = document.getElementById('tafaqud-shift').value;
-  const header = ['التسلسل','الرقم الذاتي','الاسم الثلاثي','السوية التنظيمية الثانية','السوية التنظيمية الثالثة','السوية التنظيمية الرابعة','السوية التنظيمية الخامسة','نمط الدوام','مسمى العمل','مكان الانتشار'];
-  const rows = [header];
-  getTafaqudRows().forEach(r => rows.push([r.seq,r.milId,r.name,r.lv2,r.lv3,r.lv4,r.lv5,r.shift,r.job,r.location]));
+  const rows = buildTafaqudExcelRows();
   if (rows.length <= 1) { showToast('⚠️ الجدول فارغ', 'error'); return; }
   try {
     await buildStyledExcelJS(rows, {
@@ -15975,21 +15978,24 @@ function getGhiyabRows() {
 }
 
 // ---- تصدير Excel ----
-function exportGhiyabExcel() {
-  const date = document.getElementById('ghiyab-date').value;
-  const shift = document.getElementById('ghiyab-shift').value;
+function buildGhiyabExcelRows() {
   const header = ['الرقم_الذاتي','الاسم_الثلاثي','السوية_التنظيمية_الثانية','السوية_التنظيمية_الثالثة','السوية_التنظيمية_الرابعة','السوية_التنظيمية_الخامسة','نمط الدوام','مسمى العمل','مكان الانتشار','سبب الغياب'];
   const rows = [header];
   getGhiyabRows().forEach(r => rows.push([r.milId,r.name,r.lv2,r.lv3,r.lv4,r.lv5,r.shift,r.job,r.location||'',r.reason]));
+  return rows;
+}
+
+function exportGhiyabExcel() {
+  const date = document.getElementById('ghiyab-date').value;
+  const shift = document.getElementById('ghiyab-shift').value;
+  const rows = buildGhiyabExcelRows();
   downloadGhiyabExcel(rows, `غياب_${shift}_${date}`);
 }
 
 async function shareGhiyabExcelDirect() {
   const date = document.getElementById('ghiyab-date').value;
   const shift = document.getElementById('ghiyab-shift').value;
-  const header = ['الرقم_الذاتي','الاسم_الثلاثي','السوية_التنظيمية_الثانية','السوية_التنظيمية_الثالثة','السوية_التنظيمية_الرابعة','السوية_التنظيمية_الخامسة','نمط الدوام','مسمى العمل','مكان الانتشار','سبب الغياب'];
-  const rows = [header];
-  getGhiyabRows().forEach(r => rows.push([r.milId,r.name,r.lv2,r.lv3,r.lv4,r.lv5,r.shift,r.job,r.location||'',r.reason]));
+  const rows = buildGhiyabExcelRows();
   if (rows.length <= 1) { showToast('⚠️ السجل فارغ', 'error'); return; }
   try {
     await buildStyledExcelJS(rows, {
