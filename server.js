@@ -158,7 +158,10 @@ function parseBasicAuth(req) {
 function requireAuth(req, res, next) {
   const auth = parseBasicAuth(req);
   if (!auth) {
-    res.set('WWW-Authenticate', 'Basic realm="الديوان العسكري"');
+    // ملاحظة: قيمة ترويسة WWW-Authenticate يجب أن تكون بأحرف ASCII فقط —
+    // Node.js يرمي خطأ ERR_INVALID_CHAR إن احتوت على أحرف عربية (يونيكود)،
+    // لذلك النص هنا بالإنجليزية فقط (لا يظهر للمستخدم عادة، فقط اسم داخلي للمتصفح).
+    res.set('WWW-Authenticate', 'Basic realm="Diwan Al-Askari"');
     return res.status(401).send('Authentication required');
   }
   req.authed = auth;
