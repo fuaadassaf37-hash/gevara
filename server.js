@@ -158,6 +158,9 @@ function parseBasicAuth(req) {
 function requireAuth(req, res, next) {
   const auth = parseBasicAuth(req);
   if (!auth) {
+    // تسجيل تشخيصي: يساعد على معرفة سبب فشل أي طلب مزامنة لا يصل بنجاح —
+    // خصوصاً بعد تغيير كلمات المرور، حيث يبقى المتصفح يرسل بيانات قديمة محفوظة.
+    console.warn(`[auth] رُفض طلب بدون/بمصادقة خاطئة: ${req.method} ${req.path}`);
     // ملاحظة: قيمة ترويسة WWW-Authenticate يجب أن تكون بأحرف ASCII فقط —
     // Node.js يرمي خطأ ERR_INVALID_CHAR إن احتوت على أحرف عربية (يونيكود)،
     // لذلك النص هنا بالإنجليزية فقط (لا يظهر للمستخدم عادة، فقط اسم داخلي للمتصفح).
@@ -180,9 +183,11 @@ app.get('/api/whoami', (req, res) => {
 // ----------------------------------------------------------------------------
 app.post('/api/sync/operations', async (req, res) => {
   if (req.authed.role === 'viewer') {
+    console.warn(`[sync] رفض كتابة من حساب قراءة-فقط: ${req.authed.user}`);
     return res.status(403).json({ error: 'viewer role is read-only' });
   }
   const operations = (req.body && req.body.operations) || [];
+  console.log(`[sync] طلب من ${req.authed.user} — عدد العمليات: ${operations.length}`);
   if (!Array.isArray(operations) || !operations.length) {
     return res.json({ results: [], serverSequence: store.seq });
   }
@@ -230,7 +235,16 @@ app.post('/api/sync/operations', async (req, res) => {
     acceptedForBroadcast.push(logEntry);
   }
 
-  await persistStore();
+  try {
+    await persistStore();
+  } catch (e) {
+    console.error(`[sync] فشل حفظ الملف على القرص:`, e.message);
+    return res.status(500).json({ error: 'failed to persist to disk', message: e.message });
+  }
+
+  const accepted = results.filter((r) => r.status === 'accepted').length;
+  const conflicts = results.filter((r) => r.status === 'conflict').length;
+  console.log(`[sync] النتيجة — مقبول: ${accepted}، تعارض: ${conflicts}، بثّ لعدد اتصالات: ${io.engine.clientsCount}`);
 
   if (acceptedForBroadcast.length) {
     io.emit('sync:operations', {
@@ -298,15 +312,19 @@ const io = new SocketIOServer(httpServer, {
 
 io.use((socket, next) => {
   const auth = parseBasicAuth(socket.request);
-  if (!auth) return next(new Error('unauthorized'));
+  if (!auth) {
+    console.warn('[socket] رُفض اتصال بدون مصادقة صحيحة');
+    return next(new Error('unauthorized'));
+  }
   socket.authed = auth;
   next();
 });
 
 io.on('connection', (socket) => {
-  // لا حاجة لغرف (rooms) — كل التعديلات تخص نفس مجموعة البيانات الواحدة،
-  // فالبث العام لكل المتصلين هو المطلوب هنا فعلياً.
-  socket.on('disconnect', () => {});
+  console.log(`[socket] اتصال جديد — المستخدم: ${socket.authed.user} — إجمالي المتصلين الآن: ${io.engine.clientsCount}`);
+  socket.on('disconnect', (reason) => {
+    console.log(`[socket] قطع اتصال — المستخدم: ${socket.authed.user} — السبب: ${reason}`);
+  });
 });
 
 async function main() {
