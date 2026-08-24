@@ -250,6 +250,9 @@ app.post('/api/sync/operations', async (req, res) => {
     io.emit('sync:operations', {
       operations: acceptedForBroadcast.map((e) => ({
         opId: e.opId,
+        // seq يُرفَق بالبث حتى يحدّث العميل مؤشر التسلسل لديه مباشرة — أي جلب
+        // لاحق عبر /api/sync/bootstrap سيبدأ من بعده فلا تُعاد نفس العمليات.
+        seq: e.seq,
         record: { id: e.record.id, revision: e.record.revision, payload: e.record.payload },
         actor: e.actor,
       })),
@@ -320,10 +323,23 @@ io.use((socket, next) => {
   next();
 });
 
+// قائمة الحضور الحية: أسماء الحسابات المتصلة حالياً عبر Socket.IO.
+// تُبثّ لكل المتصلين عند كل دخول/خروج حتى يرى الجميع من هو موجود الآن.
+function broadcastPresence() {
+  const users = new Set();
+  for (const [, s] of io.sockets.sockets) {
+    if (s.authed && s.authed.user) users.add(s.authed.user);
+  }
+  io.emit('presence:update', { online: [...users] });
+}
+
 io.on('connection', (socket) => {
   console.log(`[socket] اتصال جديد — المستخدم: ${socket.authed.user} — إجمالي المتصلين الآن: ${io.engine.clientsCount}`);
+  broadcastPresence();
   socket.on('disconnect', (reason) => {
     console.log(`[socket] قطع اتصال — المستخدم: ${socket.authed.user} — السبب: ${reason}`);
+    // نؤجّل البث لحظة واحدة حتى يُزال الـ socket المنقطع فعلاً من قائمة الاتصالات.
+    setTimeout(broadcastPresence, 50);
   });
 });
 
